@@ -3,25 +3,7 @@ import random
 import os
 
 
-class Ownship:
-    def __init__(self, speed_knot = (90, 180),heading_deg = (0, 359), altitude = (4000, 6000), vz = (-300, 300)):
-        self.speed_knot = speed_knot
-        self.heading_deg = heading_deg
-        self.altitude = altitude
-        self.vz = vz
-
-    def __str__(self):
-        return f'Параметры Ownsip: {self.speed_knot} узлов...'
-
-
-class Intruder():
-    def __init__(self, speed_knot = (90, 180),heading_deg = (0, 359), vz = (-300, 300)):
-        self.speed_knot = speed_knot
-        self.heading_deg = heading_deg
-        self.vz = vz
-
-    def __str__(self):
-        return f" Intruder {self.speed_knot}"
+from models import Ownship, Intruder
 
 
 '''
@@ -179,7 +161,7 @@ def generate_conflict_scenario(
                            region['lat_center'] + region['lat_spread'])
     lon_c = random.uniform(region['lon_center'] - region['lon_spread'],
                            region['lon_center'] + region['lon_spread'])
-    alt_c = random.uniform(*ownship_config.altitude)  # Генерация случайной высоты в футах
+    alt_c = ownship_config.altitude  # Генерация случайной высоты в футах
 
     # 2. Позиция AC1: ГАРАНТИРОВАННОЕ нарушение
     # Определение случайного положения нарушитля внутрри безопасного круга
@@ -208,10 +190,10 @@ def generate_conflict_scenario(
     ac_alt_c = alt_c + alt_offset
 
     # 3. Движение
-    own_heading = random.uniform(*ownship_config.heading_deg)
-    own_speed = random.uniform(*ownship_config.speed_knot)
+    own_heading = ownship_config.heading_deg
+    own_speed = ownship_config.speed_knot
     own_vx, own_vy = heading_to_vx_vy(own_heading, own_speed)  # Проекции скоростей в узлах
-    own_vz = random.uniform(*ownship_config.vz)  # Вертикальная скорость в футах
+    own_vz = ownship_config.vz  # Вертикальная скорость в футах
 
     ac_speed = random.uniform(*ac1_config.speed_knot) if isinstance(ac1_config.speed_knot, tuple) else ac1_config.speed_knot
     ac_heading = random.uniform(*ac1_config.heading_deg)
