@@ -1,7 +1,7 @@
 import math
 import random
 import os
-
+import json
 
 from models import Ownship, Intruder
 
@@ -21,6 +21,20 @@ EARTH_E = 0.0818191908426
 NM_TO_M = 1852.0  # морской мили в метры
 type_conflict = "NMAC"  # или "LOWC"
 
+import math
+
+
+def vx_vy_to_heading(vx, vy):
+
+    gs = math.sqrt(vx ** 2 + vy ** 2)
+
+    heading_rad = math.atan2(vx, vy)
+
+    heading_deg = math.degrees(heading_rad)
+    if heading_deg < 0:
+        heading_deg += 360
+
+    return {'track': heading_deg, 'gs' :gs}
 if type_conflict == "LOWC":
     SAFE_HORIZ_M = 609.9
     SAFE_VERT_FT = 500.0
@@ -88,6 +102,35 @@ def generate_single_daa(filename, ownship_init, ac1_init, duration_sec=10):
             f.write(
                 f"Ownship, {lat_o_print:.8f}, {lon_o_print:.8f}, {alt_o:.0f}, {vx_o:.1f}, {vy_o:.1f}, {vz_o}, {t}\n")
             f.write(f"AC1, {lat_a_print:.8f}, {lon_a_print:.8f}, {alt_a:.0f}, {vx_a:.1f}, {vy_a:.1f}, {vz_a}, {t}\n")
+
+
+            track_info_ownship = vx_vy_to_heading(vx_o,vy_o)
+            track_info_intruder = vx_vy_to_heading(vx_a,vy_a)
+
+            json_template = {
+                "time": t,
+                "ownership": {
+                    "lat": lat_o_print,
+                    "lon": lon_o_print,
+                    "alt": alt_o,
+                    "track": track_info_ownship['track'],
+                    "gs": track_info_ownship['gs'],
+                    "vs": vz_o
+                },
+                "traffic": {
+                    "id": 'AC1',  # Идентификатор объекта
+                    "lat": lat_a_print,  # Широта в градусах
+                    "lon": lon_a_print,  # Долгота в градусах
+                    "alt": alt_a,  # Высота
+                    "track": track_info_intruder['track'],
+                    "gs": track_info_intruder['gs'],
+                    "vs": vz_a
+                }
+            }
+
+            json_string = json.dumps(json_template)
+            print(json_string)
+
 
 
 def rewind_trajectory(lat_end, lon_end, alt_end, vx, vy, vz_fpm, steps):
