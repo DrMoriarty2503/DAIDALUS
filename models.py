@@ -25,7 +25,13 @@ class Ownship:
 
 
 class Intruder:
-    def __init__(self, speed_knot = (90, 180),heading_deg = (0, 359), vz = (-300, 300)):
+    def __init__(self, speed_knot = None,heading_deg = None,vz = None):
+        if speed_knot is None:
+            speed_knot = random.uniform(90, 180)
+        if heading_deg is None:
+            heading_deg = random.uniform(0, 359)
+        if vz is None:
+            vz = random.uniform(-300, 300)
         self.speed_knot = speed_knot
         self.heading_deg = heading_deg
         self.vz = vz

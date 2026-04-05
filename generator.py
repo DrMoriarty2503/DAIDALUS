@@ -4,7 +4,7 @@ import os
 import json
 
 from models import Ownship, Intruder
-
+from daa_logic_docker import *
 
 '''
     Формирование траекторий .daa со столкновением
@@ -55,6 +55,94 @@ def heading_to_vx_vy(heading_deg, speed_knot):
     return vx, vy
 
 
+EARTH_A = 6378137.0
+EARTH_E = 0.0818191908426
+EARTH_F = 1 / 298.257223563  # сжатие
+EARTH_E2 = EARTH_E ** 2
+EARTH_B_A = math.sqrt(1 - EARTH_E2)  # b/a = √(1-e²)
+
+
+def geodetic_to_reduced(lat_deg):
+
+    φ_rad = math.radians(lat_deg)
+    tan_φ = math.tan(φ_rad)
+    tan_β = EARTH_B_A * tan_φ
+    β_rad = math.atan(tan_β)
+    return β_rad
+
+
+def reduced_to_geodetic(beta_deg):
+
+    β_rad = math.radians(beta_deg)
+    tan_β = math.tan(β_rad)
+    tan_φ = tan_β / EARTH_B_A
+    φ_rad = math.atan(tan_φ)
+    return math.degrees(φ_rad)
+
+
+def andoyer_distance(lat1_deg, lon1_deg, lat2_deg, lon2_deg):
+
+    u1 = geodetic_to_reduced(lat1_deg)  # u = β
+    u2 = geodetic_to_reduced(lat2_deg)
+
+    delta_lambda = math.radians(lon2_deg - lon1_deg)
+
+    sin_u1 = math.sin(u1)
+    sin_u2 = math.sin(u2)
+    cos_u1 = math.cos(u1)
+    cos_u2 = math.cos(u2)
+
+    sin_dl = math.sin(delta_lambda)
+    cos_dl = math.cos(delta_lambda)
+
+    p = cos_u2 * sin_dl  # sinσ * sinA
+    q = cos_u1 * sin_u2 - sin_u1 * cos_u2 * cos_dl  # sinσ * cosA
+    n = sin_u1 * sin_u2 + cos_u1 * cos_u2 * cos_dl  # cosσ
+
+    sigma = math.atan2(math.sqrt(p ** 2 + q ** 2), n)
+
+    if sigma < 1e-12:
+        return 0.0
+
+    sin_sigma = math.sin(sigma)
+    cos_sigma = math.cos(sigma)
+
+    if abs(1 + cos_sigma) < 1e-12:
+        M = 0
+    else:
+        M = (sigma - 3 * sin_sigma) / (1 + cos_sigma)
+
+    if abs(1 - cos_sigma) < 1e-12:
+        N = 0
+    else:
+        N = (sigma + 3 * sin_sigma) / (1 - cos_sigma)
+
+    U = (sin_u1 + sin_u2) ** 2
+    V = (sin_u1 - sin_u2) ** 2
+
+    alpha = EARTH_E2
+    delta_sigma = -0.25 * alpha * (M * U + N * V)
+
+    S = EARTH_A * (sigma + delta_sigma)
+
+    return S
+
+def andoyer_azimuth(lat1_deg, lon1_deg, lat2_deg, lon2_deg):
+    B1 = math.radians(lat1_deg)
+    B2 = math.radians(lat2_deg)
+    delta_L = math.radians(lon2_deg - lon1_deg)
+
+    y = math.cos(B2) * math.sin(delta_L)
+    x = math.cos(B1) * math.sin(B2) - math.sin(B1) * math.cos(B2) * math.cos(delta_L)
+    azimuth_rad = math.atan2(y, x)
+
+    azimuth_deg = math.degrees(azimuth_rad)
+    if azimuth_deg < 0:
+        azimuth_deg += 360
+
+    return azimuth_deg
+
+
 def generate_single_daa(filename, ownship_init, ac1_init, duration_sec=10):
     lat_o = math.radians(ownship_init['lat'])
     lon_o = math.radians(ownship_init['lon'])
@@ -78,7 +166,6 @@ def generate_single_daa(filename, ownship_init, ac1_init, duration_sec=10):
         for t in range(0, duration_sec + 1):
             vz_o = vz_o_func(t)
             vz_a = vz_a_func(t)
-
             if t > 0:
                 # Ownship
                 dx_nm = (vx_o * KNOT_TO_MS)
@@ -106,10 +193,17 @@ def generate_single_daa(filename, ownship_init, ac1_init, duration_sec=10):
 
             track_info_ownship = vx_vy_to_heading(vx_o,vy_o)
             track_info_intruder = vx_vy_to_heading(vx_a,vy_a)
+            horiz_dist = andoyer_distance(lat_o_print, lon_o_print, lat_a_print, lon_a_print)
+            vert_dist = abs(alt_a - alt_o)
+            print(f"t={t}: S={horiz_dist:.1f}м, Δh={vert_dist:.1f}фт")
 
+            if horiz_dist < SAFE_HORIZ_M and vert_dist < SAFE_VERT_FT:
+                print(f">>> РЕАЛЬНЫЙ КОНФЛИКТ! <<<")
+            else:
+                print(f"Конфликта нет: горизонтальное {horiz_dist:.1f}м > {SAFE_HORIZ_M}м")
             json_template = {
                 "time": t,
-                "ownership": {
+                "ownship": {
                     "lat": lat_o_print,
                     "lon": lon_o_print,
                     "alt": alt_o,
@@ -128,9 +222,8 @@ def generate_single_daa(filename, ownship_init, ac1_init, duration_sec=10):
                 }
             }
 
-            json_string = json.dumps(json_template)
-            print(json_string)
-
+            # print(json_template)
+            run_simulation(json_template)
 
 
 def rewind_trajectory(lat_end, lon_end, alt_end, vx, vy, vz_fpm, steps):
@@ -238,10 +331,10 @@ def generate_conflict_scenario(
     own_vx, own_vy = heading_to_vx_vy(own_heading, own_speed)  # Проекции скоростей в узлах
     own_vz = ownship_config.vz  # Вертикальная скорость в футах
 
-    ac_speed = random.uniform(*ac1_config.speed_knot) if isinstance(ac1_config.speed_knot, tuple) else ac1_config.speed_knot
-    ac_heading = random.uniform(*ac1_config.heading_deg)
+    ac_speed = ac1_config.speed_knot
+    ac_heading = ac1_config.heading_deg
     ac_vx, ac_vy = heading_to_vx_vy(ac_heading, ac_speed)
-    ac_vz = random.uniform(*ac1_config.vz)
+    ac_vz = ac1_config.vz
 
     #  4. Численная отмотка назад
     lat_o0, lon_o0, alt_o0 = rewind_trajectory(lat_c, lon_c, alt_c, own_vx, own_vy, own_vz, conflict_time)
