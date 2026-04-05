@@ -211,7 +211,7 @@ def generate_single_daa(filename, ownship_init, ac1_init, duration_sec=10):
                     "gs": track_info_ownship['gs'],
                     "vs": vz_o
                 },
-                "traffic": {
+                "traffic": [{
                     "id": 'AC1',  # Идентификатор объекта
                     "lat": lat_a_print,  # Широта в градусах
                     "lon": lon_a_print,  # Долгота в градусах
@@ -219,7 +219,7 @@ def generate_single_daa(filename, ownship_init, ac1_init, duration_sec=10):
                     "track": track_info_intruder['track'],
                     "gs": track_info_intruder['gs'],
                     "vs": vz_a
-                }
+                }]
             }
 
             # print(json_template)
