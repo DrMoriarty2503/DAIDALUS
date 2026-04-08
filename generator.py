@@ -151,7 +151,6 @@ def andoyer_azimuth(lat1_deg, lon1_deg, lat2_deg, lon2_deg):
     return azimuth_deg
 
 def direct_geodetic_problem(lat1_deg, lon1_deg, azimuth_deg, distance_m):
-
     lat1 = math.radians(lat1_deg)
     lon1 = math.radians(lon1_deg)
     alpha1 = math.radians(azimuth_deg)
@@ -215,7 +214,6 @@ def direct_geodetic_problem(lat1_deg, lon1_deg, azimuth_deg, distance_m):
 
 
 def generate_single_daa(filename, ownship_init, ac1_init, duration_sec=10):
-    def generate_single_daa(filename, ownship_init, ac1_init, duration_sec=10):
         # Начальные координаты (в градусах для прямой задачи)
         lat_o = ownship_init['lat']
         lon_o = ownship_init['lon']
@@ -462,7 +460,7 @@ if __name__ == "__main__":
     # Параметры конфликта
     generate_multiple_scenarios(
         output_dir="random_conflicts",
-        num_scenarios=2,  # Количество генерируемых сценариев
+        num_scenarios=200,  # Количество генерируемых сценариев
         duration_sec=120,  # Продолжительность полёта
         conflict_time=100,  # Примерное время конфликта
         seed=2025,
