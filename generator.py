@@ -14,8 +14,12 @@ from daa_logic_docker import *
     "unitless, [deg], [deg], [ft], [knot], [knot], [fpm], [s]"
 '''
 # Параметры WGS-84
-EARTH_A = 6378137.0
-EARTH_E = 0.0818191908426
+EARTH_A = 6378137.0  # большая полуось (м)
+EARTH_F = 1 / 298.257223563  # сжатие
+EARTH_B = EARTH_A * (1 - EARTH_F)  # малая полуось (м)
+EARTH_E2 = 2 * EARTH_F - EARTH_F ** 2  # квадрат эксцентриситета
+EARTH_E = math.sqrt(EARTH_E2)  # эксцентриситет
+EARTH_B_A = math.sqrt(1 - EARTH_E2)  # b/a
 
 #  Константы безопасности
 NM_TO_M = 1852.0  # морской мили в метры
@@ -35,6 +39,8 @@ def vx_vy_to_heading(vx, vy):
         heading_deg += 360
 
     return {'track': heading_deg, 'gs' :gs}
+
+
 if type_conflict == "LOWC":
     SAFE_HORIZ_M = 609.9
     SAFE_VERT_FT = 500.0
@@ -43,6 +49,8 @@ elif type_conflict == "NMAC":
     SAFE_VERT_FT = 100.0
 else:
     raise ValueError("type_conflict must be 'NMAC' or 'LOWC'")
+
+
 
 NM_TO_DEG = 1.0 / 60.0
 KNOT_TO_MS = 0.514444
@@ -142,116 +150,167 @@ def andoyer_azimuth(lat1_deg, lon1_deg, lat2_deg, lon2_deg):
 
     return azimuth_deg
 
+def direct_geodetic_problem(lat1_deg, lon1_deg, azimuth_deg, distance_m):
+
+    lat1 = math.radians(lat1_deg)
+    lon1 = math.radians(lon1_deg)
+    alpha1 = math.radians(azimuth_deg)
+
+    U1 = math.atan((1 - EARTH_F) * math.tan(lat1))
+    sin_U1 = math.sin(U1)
+    cos_U1 = math.cos(U1)
+
+    sigma1 = math.atan2(math.tan(U1), math.cos(alpha1))
+    sin_alpha = cos_U1 * math.sin(alpha1)
+    cos2_alpha = 1 - sin_alpha ** 2
+    u2 = cos2_alpha * (EARTH_A ** 2 - EARTH_B ** 2) / (EARTH_B ** 2)
+
+    A = 1 + u2 / 16384 * (4096 + u2 * (-768 + u2 * (320 - 175 * u2)))
+    B = u2 / 1024 * (256 + u2 * (-128 + u2 * (74 - 47 * u2)))
+
+    sigma = distance_m / (EARTH_B * A)
+
+    for _ in range(100):
+        cos_2sigma_m = math.cos(2 * sigma1 + sigma)
+        sin_sigma = math.sin(sigma)
+        cos_sigma = math.cos(sigma)
+
+        delta_sigma = B * sin_sigma * (
+            cos_2sigma_m + B / 4 * (
+                cos_sigma * (-1 + 2 * cos_2sigma_m ** 2) -
+                B / 6 * cos_2sigma_m * (-3 + 4 * sin_sigma ** 2) * (-3 + 4 * cos_2sigma_m ** 2)
+            )
+        )
+
+        sigma_new = distance_m / (EARTH_B * A) + delta_sigma
+
+        if abs(sigma_new - sigma) < 1e-12:
+            sigma = sigma_new
+            break
+        sigma = sigma_new
+
+    sin_sigma = math.sin(sigma)
+    cos_sigma = math.cos(sigma)
+
+    lat2 = math.atan2(
+        sin_U1 * cos_sigma + cos_U1 * sin_sigma * math.cos(alpha1),
+        (1 - EARTH_F) * math.sqrt(sin_alpha ** 2 + (sin_U1 * sin_sigma - cos_U1 * cos_sigma * math.cos(alpha1)) ** 2)
+    )
+
+    lambda_rad = math.atan2(
+        sin_sigma * math.sin(alpha1),
+        cos_U1 * cos_sigma - sin_U1 * sin_sigma * math.cos(alpha1)
+    )
+
+    C = EARTH_F / 16 * cos2_alpha * (4 + EARTH_F * (4 - 3 * cos2_alpha))
+    L = lambda_rad - (1 - C) * EARTH_F * sin_alpha * (
+        sigma + C * sin_sigma * (
+            cos_2sigma_m + C * cos_sigma * (-1 + 2 * cos_2sigma_m ** 2)
+        )
+    )
+
+    lon2 = lon1 + L
+
+    return math.degrees(lat2), math.degrees(lon2)
+
 
 def generate_single_daa(filename, ownship_init, ac1_init, duration_sec=10):
-    lat_o = math.radians(ownship_init['lat'])
-    lon_o = math.radians(ownship_init['lon'])
-    alt_o = float(ownship_init['alt'])
-    vx_o = ownship_init['vx']
-    vy_o = ownship_init['vy']
-    vz_o_func = ownship_init['vz_func']
+    def generate_single_daa(filename, ownship_init, ac1_init, duration_sec=10):
+        # Начальные координаты (в градусах для прямой задачи)
+        lat_o = ownship_init['lat']
+        lon_o = ownship_init['lon']
+        alt_o = ownship_init['alt']
+        vx_o = ownship_init['vx']
+        vy_o = ownship_init['vy']
+        vz_o_func = ownship_init['vz_func']
 
-    lat_a = math.radians(ac1_init['lat'])
-    lon_a = math.radians(ac1_init['lon'])
-    alt_a = float(ac1_init['alt'])
-    vx_a = ac1_init['vx']
-    vy_a = ac1_init['vy']
-    vz_a_func = ac1_init['vz_func']
+        lat_a = ac1_init['lat']
+        lon_a = ac1_init['lon']
+        alt_a = ac1_init['alt']
+        vx_a = ac1_init['vx']
+        vy_a = ac1_init['vy']
+        vz_a_func = ac1_init['vz_func']
 
-    with open(filename, 'w') as f:
-        f.write("NAME, lat, lon, alt, vx, vy, vz, time\n")
-        f.write("unitless, [deg], [deg], [ft], [knot], [knot], [fpm], [s]\n")
+        # Вычисляем курсы из компонент скорости
+        ownship_heading = vx_vy_to_heading(vx_o, vy_o)['track']
+        ownship_speed = vx_vy_to_heading(vx_o, vy_o)['gs']
+        intruder_heading = vx_vy_to_heading(vx_a, vy_a)['track']
+        intruder_speed = vx_vy_to_heading(vx_a, vy_a)['gs']
 
-        # итеративный расчёт координат
-        for t in range(0, duration_sec + 1):
-            vz_o = vz_o_func(t)
-            vz_a = vz_a_func(t)
-            if t > 0:
-                # Ownship
-                dx_nm = (vx_o * KNOT_TO_MS)
-                dy_nm = (vy_o * KNOT_TO_MS)
+        with open(filename, 'w') as f:
+            f.write("NAME, lat, lon, alt, vx, vy, vz, time\n")
+            f.write("unitless, [deg], [deg], [ft], [knot], [knot], [fpm], [s]\n")
 
-                lat_o += dy_nm / (EARTH_A)
-                lon_o += dx_nm / (EARTH_A * math.sin(lat_o))
-                alt_o += vz_o / 60.0
+            for t in range(0, duration_sec + 1):
+                vz_o = vz_o_func(t)
+                vz_a = vz_a_func(t)
 
-                # AC1
-                dx_nm_a = vx_a * KNOT_TO_MS
-                dy_nm_a = vy_a * KNOT_TO_MS
-                lat_a += dy_nm_a / EARTH_A
-                lon_a += dx_nm_a / (EARTH_A * math.sin(lat_a))
-                alt_a += vz_a / 60.0
+                # Записываем текущие координаты
+                f.write(f"Ownship, {lat_o:.8f}, {lon_o:.8f}, {alt_o:.0f}, "
+                        f"{vx_o:.1f}, {vy_o:.1f}, {vz_o}, {t}\n")
+                f.write(f"AC1, {lat_a:.8f}, {lon_a:.8f}, {alt_a:.0f}, "
+                        f"{vx_a:.1f}, {vy_a:.1f}, {vz_a}, {t}\n")
 
-            lat_o_print = math.degrees(lat_o)
-            lon_o_print = math.degrees(lon_o)
-            lat_a_print = math.degrees(lat_a)
-            lon_a_print = math.degrees(lon_a)
-            f.write(
-                f"Ownship, {lat_o_print:.8f}, {lon_o_print:.8f}, {alt_o:.0f}, {vx_o:.1f}, {vy_o:.1f}, {vz_o}, {t}\n")
-            f.write(f"AC1, {lat_a_print:.8f}, {lon_a_print:.8f}, {alt_a:.0f}, {vx_a:.1f}, {vy_a:.1f}, {vz_a}, {t}\n")
+                # Проверка конфликта
+                horiz_dist = andoyer_distance(lat_o, lon_o, lat_a, lon_a)
+                vert_dist = abs(alt_a - alt_o)
+                print(f"t={t}: S={horiz_dist:.1f}м, Δh={vert_dist:.1f}фт")
 
+                if horiz_dist < SAFE_HORIZ_M and vert_dist < SAFE_VERT_FT:
+                    print(f">>> РЕАЛЬНЫЙ КОНФЛИКТ! <<<")
+                else:
+                    print(f"Конфликта нет: горизонтальное {horiz_dist:.1f}м > {SAFE_HORIZ_M}м")
 
-            track_info_ownship = vx_vy_to_heading(vx_o,vy_o)
-            track_info_intruder = vx_vy_to_heading(vx_a,vy_a)
-            horiz_dist = andoyer_distance(lat_o_print, lon_o_print, lat_a_print, lon_a_print)
-            vert_dist = abs(alt_a - alt_o)
-            print(f"t={t}: S={horiz_dist:.1f}м, Δh={vert_dist:.1f}фт")
+                # Отправка в DAIDALUS
+                json_template = {
+                    "time": t,
+                    "ownship": {
+                        "lat": lat_o, "lon": lon_o, "alt": alt_o,
+                        "track": ownship_heading, "gs": ownship_speed, "vs": vz_o
+                    },
+                    "traffic": [{
+                        "id": 'AC1',
+                        "lat": lat_a, "lon": lon_a, "alt": alt_a,
+                        "track": intruder_heading, "gs": intruder_speed, "vs": vz_a
+                    }]
+                }
+                run_simulation(json_template)
 
-            if horiz_dist < SAFE_HORIZ_M and vert_dist < SAFE_VERT_FT:
-                print(f">>> РЕАЛЬНЫЙ КОНФЛИКТ! <<<")
-            else:
-                print(f"Конфликта нет: горизонтальное {horiz_dist:.1f}м > {SAFE_HORIZ_M}м")
-            json_template = {
-                "time": t,
-                "ownship": {
-                    "lat": lat_o_print,
-                    "lon": lon_o_print,
-                    "alt": alt_o,
-                    "track": track_info_ownship['track'],
-                    "gs": track_info_ownship['gs'],
-                    "vs": vz_o
-                },
-                "traffic": [{
-                    "id": 'AC1',  # Идентификатор объекта
-                    "lat": lat_a_print,  # Широта в градусах
-                    "lon": lon_a_print,  # Долгота в градусах
-                    "alt": alt_a,  # Высота
-                    "track": track_info_intruder['track'],
-                    "gs": track_info_intruder['gs'],
-                    "vs": vz_a
-                }]
-            }
-
-            # print(json_template)
-            run_simulation(json_template)
+                if t < duration_sec:
+                    lat_o, lon_o, alt_o = apply_motion(
+                        lat_o, lon_o, alt_o, ownship_heading, ownship_speed, vz_o, dt=1.0
+                    )
+                    lat_a, lon_a, alt_a = apply_motion(
+                        lat_a, lon_a, alt_a, intruder_heading, intruder_speed, vz_a, dt=1.0
+                    )
 
 
-def rewind_trajectory(lat_end, lon_end, alt_end, vx, vy, vz_fpm, steps):
-    """
-    Численно отматывает траекторию НАЗАД на `steps` секунд,
-    используя ТУ ЖЕ логику, что и generate_single_daa.
-    """
 
-    alt = alt_end
-    # Координаты объекта в радианах
-    lat = math.radians(lat_end)
-    lon = math.radians(lon_end)
+def rewind_trajectory(lat_end_deg, lon_end_deg, alt_end_ft,
+                       heading_deg, speed_knot, vz_fpm, steps):
 
-    # Преобразование скоростей из узлов в м/с
-    dx = vx * KNOT_TO_MS
-    dy = vy * KNOT_TO_MS
+    lat = lat_end_deg
+    lon = lon_end_deg
+    alt = alt_end_ft
 
-    # Итеративно находим точку старта с шагом в 1 секунду
+    distance_per_step_m = speed_knot * KNOT_TO_MS  # метры за секунду
+    alt_per_step_ft = vz_fpm / 60.0  # футы за секунду
+
     for _ in range(steps):
-        # Откатываем широту
-        lat_prev = lat - dy / EARTH_A
-        lon_prev = lon - dx / (EARTH_A * math.sin(lat))
-        alt_prev = alt - vz_fpm / 60.0
-        lat, lon, alt = lat_prev, lon_prev, alt_prev
+        back_azimuth = (heading_deg + 180) % 360
 
-    lat = math.degrees(lat)
-    lon = math.degrees(lon)
+        lat, lon = direct_geodetic_problem(lat, lon, back_azimuth, distance_per_step_m)
+
+        alt -= alt_per_step_ft
+
     return lat, lon, alt
+
+def apply_motion(lat_deg, lon_deg, alt_ft, heading_deg, speed_knot, vz_fpm, dt=1.0):
+
+    distance_m = speed_knot * KNOT_TO_MS * dt
+    new_lat, new_lon = direct_geodetic_problem(lat_deg, lon_deg, heading_deg, distance_m)
+    new_alt = alt_ft + vz_fpm / 60.0 * dt
+    return new_lat, new_lon, new_alt
 
 
 def generate_conflict_scenario(
@@ -356,6 +415,7 @@ def generate_conflict_scenario(
     generate_single_daa(filename, ownship_init, ac1_init, duration_sec)
 
 
+
 def generate_multiple_scenarios(
         output_dir="conflict_scenarios",
         num_scenarios=20,
@@ -402,7 +462,7 @@ if __name__ == "__main__":
     # Параметры конфликта
     generate_multiple_scenarios(
         output_dir="random_conflicts",
-        num_scenarios=50000,  # Количество генерируемых сценариев
+        num_scenarios=2,  # Количество генерируемых сценариев
         duration_sec=120,  # Продолжительность полёта
         conflict_time=100,  # Примерное время конфликта
         seed=2025,
