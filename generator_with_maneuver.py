@@ -591,7 +591,7 @@ if __name__ == "__main__":
 
     generate_multiple_scenarios(
         output_dir="random_conflicts_with_maneuver",
-        num_scenarios=5,
+        num_scenarios=10,
         duration_sec=30,
         conflict_time=20,
         seed=2025,

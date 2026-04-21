@@ -25,7 +25,7 @@ EARTH_E = math.sqrt(EARTH_E2)  # эксцентриситет
 EARTH_B_A = math.sqrt(1 - EARTH_E2)  # b/a
 
 # Константы безопасности
-type_conflict = "NMAC"  # или "LOWC"
+type_conflict = "LOWC"  # или "LOWC"
 
 if type_conflict == "LOWC":
     SAFE_HORIZ_M = 609.9
@@ -335,10 +335,10 @@ def generate_single_daa(filename, ownship_init, ac1_init, duration_sec=10):
                 print(f">>> РЕАЛЬНЫЙ КОНФЛИКТ! <<<")
             else:
                 print(f"Конфликта нет: горизонтальное {horiz_dist:.1f}м > {SAFE_HORIZ_M}м")
-            noise_std = 1.0
+            noise_std = 100.0
             NOISE_STD = {
-                'lat_m': 5.0 * noise_std,
-                'lon_m': 5.0 * noise_std,
+                'lat_m': 1.0 * noise_std,
+                'lon_m': 1.0 * noise_std,
                 'alt_ft': 10.0 * noise_std,
                 'track_deg': 2.0 * noise_std,
                 'gs_knot': 2.0 * noise_std,
@@ -346,7 +346,6 @@ def generate_single_daa(filename, ownship_init, ac1_init, duration_sec=10):
             }
 
 
-            # Перевод СКО из метров в градусы
             lat_rad = math.radians(lat_o)
             std_lat_deg = NOISE_STD['lat_m'] / 111320.0
             std_lon_deg = NOISE_STD['lon_m'] / (111320.0 * math.cos(lat_rad))
@@ -370,19 +369,19 @@ def generate_single_daa(filename, ownship_init, ac1_init, duration_sec=10):
                 "ownship": {
                     "lat": lat_o + random.gauss(0, std_lat_deg),
                     "lon": lon_o + random.gauss(0, std_lon_deg),
-                    "alt": alt_o + random.gauss(0, NOISE_STD['alt_ft']),
-                    "track": (ownship_heading + random.gauss(0, NOISE_STD['track_deg'])) % 360,
-                    "gs": max(0, ownship_speed + random.gauss(0, NOISE_STD['gs_knot'])),
-                    "vs": vz_o + random.gauss(0, NOISE_STD['vs_fpm'])
+                    "alt": alt_o,
+                    "track": ownship_heading ,
+                    "gs": ownship_speed,
+                    "vs": vz_o
                 },
                 "traffic": [{
                     "id": 'AC1',
                     "lat": lat_a + random.gauss(0, std_lat_deg),
                     "lon": lon_a + random.gauss(0, std_lon_deg),
-                    "alt": alt_a + random.gauss(0, NOISE_STD['alt_ft']),
-                    "track": (intruder_heading + random.gauss(0, NOISE_STD['track_deg'])) % 360,
-                    "gs": max(0, intruder_speed + random.gauss(0, NOISE_STD['gs_knot'])),
-                    "vs": vz_a + random.gauss(0, NOISE_STD['vs_fpm'])
+                    "alt": alt_a,
+                    "track": intruder_heading,
+                    "gs": intruder_speed,
+                    "vs": vz_a
                 }]
             }
             horizontal_bands = run_simulation(json_template)
@@ -559,8 +558,8 @@ def generate_multiple_scenarios(
 # ============================================================
 
 if __name__ == "__main__":
-    ownship_params = Ownship(speed_knot=120, heading_deg=0, altitude=5000, vz=0)
-    ac1_params = Intruder(speed_knot=150, heading_deg=180, vz=0)
+    ownship_params = Ownship()
+    ac1_params = Intruder()
 
     region = {
         'lat_center': 45,
@@ -573,7 +572,7 @@ if __name__ == "__main__":
 
     generate_multiple_scenarios(
         output_dir="random_conflicts",
-        num_scenarios=1,
+        num_scenarios=1000,
         duration_sec=30,
         conflict_time=20,
         seed=2025,
